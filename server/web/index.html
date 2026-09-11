@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>S-Pankki Sandbox Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">S</span>
+    <span>S-Pankki <strong>Sandbox</strong></span>
+    <span class="env-badge">Open Banking · Sandbox</span>
+  </div>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#overview" data-tab="overview">Overview</a>
+    <a href="#payments" data-tab="payments">Payments</a>
+    <a href="#consent" data-tab="consent">Consent</a>
+    <a href="#log" data-tab="log">API log <span id="log-count" class="count" hidden></span></a>
+  </nav>
+  <div class="session">
+    <span id="status-pill" class="pill">…</span>
+    <span id="token-timer" class="muted small" title="User access token lifetime. The server refreshes it automatically."></span>
+    <button id="btn-refresh-token" class="btn ghost small" hidden>Refresh token</button>
+    <button id="btn-connect" class="btn primary small" hidden>Connect</button>
+    <button id="btn-disconnect" class="btn ghost small" hidden>Disconnect</button>
+  </div>
+</header>
+
+<main>
+  <!-- Overview -->
+  <section id="view-overview" class="view">
+    <div id="connect-hero" class="panel hero" hidden>
+      <h1>Connect a sandbox customer</h1>
+      <p>You'll be sent to S-Pankki's sandbox login. Use a customer's <b>Username</b> and <b>Password</b> from the
+        Crosskey portal (Applications → your app → <b>Sandboxes</b>). Afterwards the dashboard can read accounts,
+        balances and transactions for 180 days of consent.</p>
+      <button class="btn primary" onclick="location.href='/connect'">Connect S-Pankki</button>
+    </div>
+
+    <div id="accounts" class="accounts"></div>
+
+    <div id="tx-panel" class="panel" hidden>
+      <div class="panel-head">
+        <div>
+          <h2>Transactions</h2>
+          <div id="tx-account-label" class="muted small"></div>
+        </div>
+        <div class="toolbar">
+          <div class="seg" role="group" aria-label="Quick range">
+            <button data-range="30">30 d</button><button data-range="89">90 d</button><button data-range="365">1 y</button><button data-range="all">All</button>
+          </div>
+          <label class="field inline">From <input type="date" id="tx-from"></label>
+          <label class="field inline">To <input type="date" id="tx-to"></label>
+          <button id="tx-apply" class="btn small">Apply</button>
+        </div>
+      </div>
+
+      <div class="toolbar sub">
+        <input type="search" id="tx-search" placeholder="Search description, counterparty, amount…">
+        <div class="seg" role="group" aria-label="Direction">
+          <button data-type="all" class="on">All</button><button data-type="in">Money in</button><button data-type="out">Money out</button>
+        </div>
+        <button id="tx-export" class="btn ghost small">Export CSV</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span class="label">Transactions</span><span id="st-count" class="value">–</span></div>
+        <div class="stat"><span class="label">Money in</span><span id="st-in" class="value pos">–</span></div>
+        <div class="stat"><span class="label">Money out</span><span id="st-out" class="value neg">–</span></div>
+        <div class="stat"><span class="label">Net</span><span id="st-net" class="value">–</span></div>
+      </div>
+
+      <div id="tx-chart" class="chart"></div>
+
+      <div class="table-wrap">
+        <table class="tx-table">
+          <thead><tr><th>Date</th><th>Description</th><th class="hide-sm">Counterparty</th><th class="hide-sm">Status</th><th class="num">Amount</th></tr></thead>
+          <tbody id="tx-body"></tbody>
+        </table>
+      </div>
+      <div id="tx-note" class="muted small center"></div>
+      <div class="center"><button id="tx-more" class="btn ghost" hidden>Load more</button></div>
+    </div>
+  </section>
+
+  <!-- Payments -->
+  <section id="view-payments" class="view" hidden>
+    <div class="grid-2">
+      <form id="pay-form" class="panel" autocomplete="off">
+        <h2>New payment</h2>
+        <p class="muted small">SEPA credit transfer via the Payment Initiation API. You'll approve it on S-Pankki's sandbox login page.</p>
+        <label class="field">From account
+          <select id="pay-from"><option value="">Choose at S-Pankki during approval</option></select>
+        </label>
+        <label class="field">Quick fill
+          <select id="pay-quick">
+            <option value="">—</option>
+          </select>
+        </label>
+        <label class="field">Recipient name <input id="pay-name" required maxlength="70" placeholder="Jane Roe"></label>
+        <label class="field">Recipient IBAN <input id="pay-iban" required placeholder="FI49 6601 0005 4854 95" spellcheck="false"></label>
+        <div class="row">
+          <label class="field grow">Amount <input id="pay-amount" required inputmode="decimal" placeholder="12.50" value="1.00"></label>
+          <label class="field">Currency <select id="pay-currency"><option>EUR</option></select></label>
+        </div>
+        <label class="field">Message <input id="pay-ref" maxlength="140" placeholder="Sandbox test payment"></label>
+        <div id="pay-error" class="error" hidden></div>
+        <button id="pay-submit" class="btn primary" type="submit">Continue to S-Pankki approval</button>
+        <p class="muted small">Requires your application to be subscribed to <b>Payment Initiation API (v3.1.7)</b> in the Crosskey portal.</p>
+      </form>
+
+      <div class="panel">
+        <h2>What happens</h2>
+        <ol class="steps">
+          <li><b>App token</b> — client-credentials grant with scope <code>payments</code>.</li>
+          <li><b>Payment consent</b> — <code>POST /international-payment-consents</code>, body signed with your digital signature key (<code>x-jws-signature</code>).</li>
+          <li><b>Approval</b> — you log in at S-Pankki; intent <code>urn:s-pankki:payment:{ConsentId}</code>.</li>
+          <li><b>User token</b> — authorization code exchanged (payment tokens can't be refreshed).</li>
+          <li><b>Funds check</b> — <code>GET …/funds-confirmation</code>.</li>
+          <li><b>Submit</b> — signed <code>POST /international-payments</code>. Check its status here, then see it in Overview → Transactions.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Payment history</h2><span class="muted small">This browser session</span></div>
+      <div class="table-wrap">
+        <table class="tx-table">
+          <thead><tr><th>Created</th><th>To</th><th class="hide-sm">IBAN</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+          <tbody id="pay-body"></tbody>
+        </table>
+      </div>
+      <div id="pay-empty" class="muted small center">No payments yet.</div>
+    </div>
+  </section>
+
+  <!-- Consent -->
+  <section id="view-consent" class="view" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Account access consent</h2>
+        <div class="toolbar">
+          <button id="consent-reload" class="btn ghost small">Reload</button>
+          <button class="btn ghost small" onclick="location.href='/connect'">New consent</button>
+          <button id="consent-revoke" class="btn danger small">Revoke</button>
+        </div>
+      </div>
+      <div id="consent-body" class="muted">Not connected.</div>
+    </div>
+    <div class="panel">
+      <h2>Client</h2>
+      <dl class="kv" id="client-info"></dl>
+    </div>
+  </section>
+
+  <!-- API log -->
+  <section id="view-log" class="view" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>API log</h2>
+          <div class="muted small">Every request this server sent to S-Pankki (mTLS). Tokens and codes are redacted.</div>
+        </div>
+        <div class="toolbar">
+          <input type="search" id="log-filter" placeholder="Filter by path, status…">
+          <label class="check"><input type="checkbox" id="log-live" checked> Live</label>
+          <button id="log-clear" class="btn ghost small">Clear</button>
+        </div>
+      </div>
+      <div id="log-list" class="log-list"></div>
+      <div id="log-empty" class="muted small center">No calls yet.</div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
